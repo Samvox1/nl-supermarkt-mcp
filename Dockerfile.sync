@@ -1,0 +1,14 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y libpq5 && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir psycopg2-binary httpx requests
+
+COPY docker/sync_all.py .
+COPY sync_prices.py .
+COPY sync_folderz.py .
+COPY sync_recepten.py .
+
+CMD ["python", "sync_all.py"]

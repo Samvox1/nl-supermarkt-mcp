@@ -1,0 +1,1 @@
+"""NL Supermarkt MCP Server"""

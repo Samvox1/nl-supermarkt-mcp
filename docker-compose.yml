@@ -1,0 +1,53 @@
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: supermarkt-db
+    environment:
+      POSTGRES_DB: supermarkt_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: supermarkt123
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d supermarkt_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  mcp-server:
+    build: .
+    container_name: supermarkt-mcp
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: supermarkt_db
+      DB_USER: postgres
+      DB_PASSWORD: supermarkt123
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  # Scheduler met automatische sync
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile.cron
+    container_name: supermarkt-scheduler
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: supermarkt_db
+      DB_USER: postgres
+      DB_PASSWORD: supermarkt123
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

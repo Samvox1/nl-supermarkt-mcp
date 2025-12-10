@@ -1,0 +1,29 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install cron and dependencies
+RUN apt-get update && apt-get install -y cron libpq5 && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir psycopg2-binary httpx requests
+
+# Copy sync scripts
+COPY docker/sync_all.py .
+COPY sync_prices.py .
+COPY sync_folderz.py .
+COPY sync_recepten.py .
+COPY docker/crontab /etc/cron.d/supermarkt-cron
+
+# Setup cron
+RUN chmod 0644 /etc/cron.d/supermarkt-cron
+RUN crontab /etc/cron.d/supermarkt-cron
+RUN touch /var/log/cron.log
+
+# Environment variables for DB connection
+ENV DB_HOST=db
+ENV DB_PORT=5432
+ENV DB_NAME=supermarkt_db
+ENV DB_USER=postgres
+ENV DB_PASSWORD=supermarkt123
+
+# Run initial sync, then start cron
+CMD python sync_all.py && cron && tail -f /var/log/cron.log
