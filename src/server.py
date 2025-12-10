@@ -384,7 +384,7 @@ async def call_tool(name: str, arguments: dict):
                             seen.add(a['product_name'])
                             pct = f" -{a['discount_percent']}%" if a['discount_percent'] else ''
                             pt = f" [{a['promo_type']}]" if a['promo_type'] else ''
-                            output.append(f'  * {a["supermarket_code"].upper()}: {a["product_name"][:35]} EUR {float(a["discount_price"]):.2f}{pct}{pt}')
+                            output.append(f'  * {a["supermarket_code"].upper()}: {a["product_name"]} EUR {float(a["discount_price"]):.2f}{pct}{pt}')
                             boodschappen[a['product_name']] = (float(a['discount_price']), a['supermarket_code'], a['promo_type'], True)
 
             if basics:
@@ -396,7 +396,7 @@ async def call_tool(name: str, arguments: dict):
                                 (f'%{item}%', supermarkten))
                     r = cur.fetchone()
                     if r:
-                        output.append(f'  - {r["name"][:40]} EUR {float(r["price"]):.2f} ({r["supermarket_code"].upper()})')
+                        output.append(f'  - {r["name"]} EUR {float(r["price"]):.2f} ({r["supermarket_code"].upper()})')
                         if r['name'] not in boodschappen:
                             boodschappen[r['name']] = (float(r['price']), r['supermarket_code'], None, False)
 
@@ -419,7 +419,7 @@ async def call_tool(name: str, arguments: dict):
                 for product, prijs, promo, is_aanbieding in sorted(items, key=lambda x: x[0]):
                     aanbieding_marker = ' [AANBIEDING]' if is_aanbieding else ''
                     promo_txt = f' ({promo})' if promo else ''
-                    output.append(f'  [ ] {product[:45]}')
+                    output.append(f'  [ ] {product}')
                     output.append(f'      EUR {prijs:.2f}{promo_txt}{aanbieding_marker}')
 
             output.append(f'\n{"=" * 60}')
@@ -487,10 +487,10 @@ async def call_tool(name: str, arguments: dict):
                     AND (end_date IS NULL OR end_date >= CURRENT_DATE)
                     ORDER BY discount_percent DESC NULLS LAST
                     LIMIT 1
-                ''', (f'%{p["name"][:30]}%',))
+                ''', (f'%{p["name"]}%',))
                 promo = cur.fetchone()
                 
-                lines.append(f'\n{p["sm_name"]}: {p["name"][:40]}')
+                lines.append(f'\n{p["sm_name"]}: {p["name"]}')
                 lines.append(f'  Huidige prijs: EUR {huidige_prijs:.2f}')
                 lines.append(f'  Laagste ooit:  EUR {laagste_prijs:.2f}')
                 lines.append(f'  Hoogste ooit:  EUR {hoogste_prijs:.2f}')
@@ -568,12 +568,12 @@ async def call_tool(name: str, arguments: dict):
                     prijs = float(product['price'])
                     if max_prijs and prijs <= max_prijs:
                         is_deal = True
-                        goede_deals.append(f'  {product["name"][:35]} - EUR {prijs:.2f} (onder max van EUR {max_prijs:.2f})')
+                        goede_deals.append(f'  {product["name"]} - EUR {prijs:.2f} (onder max van EUR {max_prijs:.2f})')
                 
                 if promo and alert['notify_on_sale']:
                     is_deal = True
                     pct = f" -{promo['discount_percent']}%" if promo['discount_percent'] else ''
-                    goede_deals.append(f'  {promo["product_name"][:35]} - EUR {float(promo["discount_price"]):.2f}{pct} [{promo["supermarket_code"].upper()}]')
+                    goede_deals.append(f'  {promo["product_name"]} - EUR {float(promo["discount_price"]):.2f}{pct} [{promo["supermarket_code"].upper()}]')
             
             if goede_deals:
                 lines.append('\nGOEDE DEALS NU:')
@@ -654,14 +654,14 @@ async def call_tool(name: str, arguments: dict):
                 if promo:
                     prijs = float(promo['discount_price'])
                     pct = f" (-{promo['discount_percent']}%)" if promo['discount_percent'] else ''
-                    lines.append(f'  {promo["product_name"][:40]}')
+                    lines.append(f'  {promo["product_name"]}')
                     lines.append(f'    EUR {prijs:.2f}{pct} AANBIEDING! [{promo["supermarket_code"].upper()}]')
                     if product:
                         besparingen += float(product['price']) - prijs
                     totaal += prijs
                 elif product:
                     prijs = float(product['price'])
-                    lines.append(f'  {product["name"][:40]}')
+                    lines.append(f'  {product["name"]}')
                     lines.append(f'    EUR {prijs:.2f} [{product["supermarket_code"].upper()}]')
                     totaal += prijs
                 else:
@@ -819,7 +819,7 @@ async def call_tool(name: str, arguments: dict):
                 lines.append(f'\nSTOP {i}: {sm["icon"]} {sm["name"]}')
                 lines.append(f'  Producten: {len(items)} | Subtotaal: EUR {subtotaal:.2f}')
                 for item in items:
-                    lines.append(f'    - {item["name"][:35]} EUR {item["price"]:.2f}')
+                    lines.append(f'    - {item["name"]} EUR {item["price"]:.2f}')
             
             lines.append('\n' + '=' * 50)
             lines.append(f'TOTAAL: EUR {totaal:.2f}')
@@ -886,8 +886,8 @@ async def call_tool(name: str, arguments: dict):
                     alt = cur.fetchone()
                     if alt:
                         besparing = item['price'] - float(alt['price'])
-                        lines.append(f'  {item["name"][:30]} EUR {item["price"]:.2f}')
-                        lines.append(f'    -> {alt["name"][:30]} EUR {float(alt["price"]):.2f} (bespaar EUR {besparing:.2f})')
+                        lines.append(f'  {item["name"]} EUR {item["price"]:.2f}')
+                        lines.append(f'    -> {alt["name"]} EUR {float(alt["price"]):.2f} (bespaar EUR {besparing:.2f})')
             
             return [TextContent(type='text', text='\n'.join(lines))]
 
@@ -928,14 +928,14 @@ async def call_tool(name: str, arguments: dict):
                 
                 if promo:
                     pct = promo['discount_percent'] or 0
-                    tips.append(f'AANBIEDING: {promo["product_name"][:35]}')
+                    tips.append(f'AANBIEDING: {promo["product_name"]}')
                     tips.append(f'  -{pct}% bij {promo["supermarket_code"].upper()} - EUR {float(promo["discount_price"]):.2f}')
                     if goedkoopst:
                         totale_besparing += float(goedkoopst['price']) - float(promo['discount_price'])
                 
                 if huismerk and goedkoopst and float(huismerk['price']) < float(goedkoopst['price']) * 0.8:
                     besparing = float(goedkoopst['price']) - float(huismerk['price'])
-                    tips.append(f'HUISMERK TIP: {huismerk["name"][:35]}')
+                    tips.append(f'HUISMERK TIP: {huismerk["name"]}')
                     tips.append(f'  EUR {float(huismerk["price"]):.2f} (bespaar EUR {besparing:.2f})')
                     totale_besparing += besparing
             
