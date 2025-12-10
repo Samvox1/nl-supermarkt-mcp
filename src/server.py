@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""NL Supermarkt MCP Server - Docker compatible"""
+"""NL Supermarkt MCP Server - Extended Edition met Prijshistorie, Budget, Winkels & Recepten"""
 
 import os
 import asyncio
+import json
+from datetime import datetime, timedelta
+from math import radians, sin, cos, sqrt, atan2
 import psycopg2
 from psycopg2 import pool
 from psycopg2.extras import RealDictCursor
@@ -10,7 +13,6 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 
-# Database config from environment variables
 DB_CONFIG = {
     'host': os.environ.get('DB_HOST', '127.0.0.1'),
     'port': int(os.environ.get('DB_PORT', '5433')),
@@ -37,11 +39,22 @@ def release_db(conn):
     if db_pool:
         db_pool.putconn(conn)
 
+def haversine(lat1, lon1, lat2, lon2):
+    """Bereken afstand tussen twee punten in km"""
+    R = 6371
+    lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+    c = 2 * atan2(sqrt(a), sqrt(1-a))
+    return R * c
+
 server = Server('nl-supermarkt-mcp')
 
 @server.list_tools()
 async def list_tools():
     return [
+        # Bestaande tools
         Tool(name='zoek_producten', description='Zoek producten op naam.',
              inputSchema={'type': 'object', 'properties': {
                  'query': {'type': 'string'}, 'supermarkt': {'type': 'string'}, 'limit': {'type': 'integer', 'default': 10}
@@ -59,19 +72,102 @@ async def list_tools():
              inputSchema={'type': 'object', 'properties': {
                  'supermarkt': {'type': 'string'}, 'categorie': {'type': 'string'}, 'limit': {'type': 'integer', 'default': 15}
              }}),
-        Tool(name='zoek_recepten', description='Zoek recepten.',
+        Tool(name='zoek_recepten', description='Zoek recepten met filters voor dieet.',
              inputSchema={'type': 'object', 'properties': {
-                 'query': {'type': 'string'}, 'categorie': {'type': 'string'}, 'limit': {'type': 'integer', 'default': 10}
+                 'query': {'type': 'string'}, 
+                 'categorie': {'type': 'string'},
+                 'dieet': {'type': 'string', 'description': 'vegetarisch, vegan, glutenvrij'},
+                 'max_tijd': {'type': 'integer', 'description': 'Max bereidingstijd in minuten'},
+                 'limit': {'type': 'integer', 'default': 10}
              }}),
         Tool(name='plan_boodschappen', 
-             description='Plan boodschappen: geeft weekmenu met COMPLETE recepten en GEDETAILLEERDE boodschappenlijst per winkel.',
+             description='Plan boodschappen met weekmenu en gedetailleerde boodschappenlijst.',
              inputSchema={'type': 'object', 'properties': {
                  'dagen': {'type': 'integer', 'default': 4},
                  'personen': {'type': 'integer', 'default': 2},
                  'supermarkten': {'type': 'array', 'items': {'type': 'string'}},
                  'voorkeuren': {'type': 'array', 'items': {'type': 'string'}},
+                 'dieet': {'type': 'string', 'description': 'vegetarisch, vegan, glutenvrij'},
+                 'budget': {'type': 'number', 'description': 'Max budget in EUR'},
                  'basics': {'type': 'boolean', 'default': True}
-             }, 'required': ['supermarkten']})
+             }, 'required': ['supermarkten']}),
+        
+        # === NIEUWE TOOLS ===
+        
+        # 1. Prijshistorie & Alerts
+        Tool(name='prijshistorie', 
+             description='Bekijk prijsverloop van een product. Toont laagste prijs ooit, huidige prijs en trend.',
+             inputSchema={'type': 'object', 'properties': {
+                 'product': {'type': 'string', 'description': 'Productnaam om te zoeken'},
+                 'dagen': {'type': 'integer', 'default': 30, 'description': 'Aantal dagen historie'}
+             }, 'required': ['product']}),
+        Tool(name='prijs_alert', 
+             description='Stel een prijsalert in. Krijg melding wanneer product onder bepaalde prijs komt of in aanbieding is.',
+             inputSchema={'type': 'object', 'properties': {
+                 'product': {'type': 'string'},
+                 'max_prijs': {'type': 'number', 'description': 'Max prijs in EUR'},
+                 'notify_aanbieding': {'type': 'boolean', 'default': True}
+             }, 'required': ['product']}),
+        Tool(name='check_alerts', 
+             description='Check alle actieve prijsalerts en toon welke producten nu een goede deal zijn.',
+             inputSchema={'type': 'object', 'properties': {}}),
+        
+        # 2. Slimme Boodschappenlijst
+        Tool(name='bewaar_boodschappenlijst', 
+             description='Bewaar een boodschappenlijst om later te hergebruiken.',
+             inputSchema={'type': 'object', 'properties': {
+                 'naam': {'type': 'string', 'description': 'Naam voor de lijst (bijv. weekboodschappen, bbq)'},
+                 'producten': {'type': 'array', 'items': {'type': 'string'}}
+             }, 'required': ['naam', 'producten']}),
+        Tool(name='laad_boodschappenlijst', 
+             description='Laad een opgeslagen boodschappenlijst en toon huidige prijzen + aanbiedingen.',
+             inputSchema={'type': 'object', 'properties': {
+                 'naam': {'type': 'string'}
+             }, 'required': ['naam']}),
+        Tool(name='lijst_boodschappenlijsten', 
+             description='Toon alle opgeslagen boodschappenlijsten.',
+             inputSchema={'type': 'object', 'properties': {}}),
+        Tool(name='wacht_met_kopen', 
+             description='Analyseer welke producten binnenkort in aanbieding komen - niet nu kopen!',
+             inputSchema={'type': 'object', 'properties': {
+                 'producten': {'type': 'array', 'items': {'type': 'string'}}
+             }, 'required': ['producten']}),
+        
+        # 3. Winkel Routeplanner
+        Tool(name='vind_winkels', 
+             description='Vind dichtstbijzijnde supermarkten op basis van postcode of coordinaten.',
+             inputSchema={'type': 'object', 'properties': {
+                 'postcode': {'type': 'string'},
+                 'latitude': {'type': 'number'},
+                 'longitude': {'type': 'number'},
+                 'supermarkten': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Filter op specifieke supermarkten'},
+                 'max_afstand': {'type': 'number', 'default': 10, 'description': 'Max afstand in km'}
+             }}),
+        Tool(name='plan_winkelroute', 
+             description='Optimaliseer route langs meerdere winkels voor je boodschappenlijst.',
+             inputSchema={'type': 'object', 'properties': {
+                 'postcode': {'type': 'string'},
+                 'producten': {'type': 'array', 'items': {'type': 'string'}},
+                 'max_winkels': {'type': 'integer', 'default': 3}
+             }, 'required': ['postcode', 'producten']}),
+        
+        # 4. Budget Tracking
+        Tool(name='set_budget', 
+             description='Stel een weekbudget in voor boodschappen.',
+             inputSchema={'type': 'object', 'properties': {
+                 'budget': {'type': 'number', 'description': 'Weekbudget in EUR'}
+             }, 'required': ['budget']}),
+        Tool(name='budget_check', 
+             description='Check of boodschappenlijst binnen budget past. Suggereert goedkopere alternatieven.',
+             inputSchema={'type': 'object', 'properties': {
+                 'producten': {'type': 'array', 'items': {'type': 'string'}},
+                 'budget': {'type': 'number'}
+             }, 'required': ['producten', 'budget']}),
+        Tool(name='bespaar_tips', 
+             description='Krijg persoonlijke bespaartips gebaseerd op je boodschappen.',
+             inputSchema={'type': 'object', 'properties': {
+                 'producten': {'type': 'array', 'items': {'type': 'string'}}
+             }, 'required': ['producten']}),
     ]
 
 @server.call_tool()
@@ -81,6 +177,8 @@ async def call_tool(name: str, arguments: dict):
         conn = get_db()
         cur = conn.cursor()
 
+        # === BESTAANDE TOOLS ===
+        
         if name == 'zoek_producten':
             query = arguments.get('query', '')
             supermarkt = arguments.get('supermarkt')
@@ -173,7 +271,10 @@ async def call_tool(name: str, arguments: dict):
         elif name == 'zoek_recepten':
             query = arguments.get('query', '')
             categorie = arguments.get('categorie')
+            dieet = arguments.get('dieet')
+            max_tijd = arguments.get('max_tijd')
             limit = arguments.get('limit', 10)
+            
             params, where = [], []
             if query:
                 where.append("(naam ILIKE %s OR ingredienten::text ILIKE %s OR tags::text ILIKE %s)")
@@ -181,6 +282,13 @@ async def call_tool(name: str, arguments: dict):
             if categorie:
                 where.append("categorie = %s")
                 params.append(categorie)
+            if dieet:
+                where.append("tags::text ILIKE %s")
+                params.append(f'%{dieet}%')
+            if max_tijd:
+                where.append("bereidingstijd <= %s")
+                params.append(max_tijd)
+            
             wc = f"WHERE {' AND '.join(where)}" if where else ""
             params.append(limit)
             cur.execute(f'SELECT * FROM recepten {wc} ORDER BY CASE WHEN bron = \'eigen\' THEN 0 ELSE 1 END LIMIT %s', params)
@@ -189,7 +297,9 @@ async def call_tool(name: str, arguments: dict):
                 return [TextContent(type='text', text='Geen recepten gevonden')]
             lines = ['Recepten:\n']
             for r in results:
-                lines.append(f'\n{r["naam"]} ({r["bereidingstijd"]} min, {r["porties"]} pers)')
+                tags = ', '.join(r.get('tags', [])[:3]) if r.get('tags') else ''
+                tag_str = f' [{tags}]' if tags else ''
+                lines.append(f'\n{r["naam"]} ({r["bereidingstijd"]} min, {r["porties"]} pers){tag_str}')
                 lines.append(f'  Ingredienten: {", ".join([i["naam"] for i in r["ingredienten"][:6]])}')
             return [TextContent(type='text', text='\n'.join(lines))]
 
@@ -198,6 +308,8 @@ async def call_tool(name: str, arguments: dict):
             personen = arguments.get('personen', 2)
             supermarkten = arguments.get('supermarkten', [])
             voorkeuren = arguments.get('voorkeuren', ['pasta', 'rijst', 'hollands'])
+            dieet = arguments.get('dieet')
+            budget = arguments.get('budget')
             basics = arguments.get('basics', True)
 
             sm_ph = ','.join(['%s'] * len(supermarkten))
@@ -209,11 +321,19 @@ async def call_tool(name: str, arguments: dict):
             ''', supermarkten)
             aanbiedingen = cur.fetchall()
 
+            # Query recepten met dieet filter
+            query_parts = []
+            params = []
             if voorkeuren:
                 voorkeur_clause = " OR ".join(["categorie = %s" for _ in voorkeuren])
-                cur.execute(f'SELECT * FROM recepten WHERE {voorkeur_clause} ORDER BY CASE WHEN bron = \'eigen\' THEN 0 ELSE 1 END, RANDOM()', voorkeuren)
-            else:
-                cur.execute('SELECT * FROM recepten ORDER BY RANDOM()')
+                query_parts.append(f'({voorkeur_clause})')
+                params.extend(voorkeuren)
+            if dieet:
+                query_parts.append("tags::text ILIKE %s")
+                params.append(f'%{dieet}%')
+            
+            where_clause = f"WHERE {' AND '.join(query_parts)}" if query_parts else ""
+            cur.execute(f'SELECT * FROM recepten {where_clause} ORDER BY CASE WHEN bron = \'eigen\' THEN 0 ELSE 1 END, RANDOM()', params)
             recepten = cur.fetchall()
 
             def score(recept):
@@ -235,6 +355,10 @@ async def call_tool(name: str, arguments: dict):
             output = []
             output.append('=' * 60)
             output.append(f'WEEKPLAN: {dagen} dagen, {personen} personen')
+            if dieet:
+                output.append(f'Dieet: {dieet}')
+            if budget:
+                output.append(f'Budget: EUR {budget:.2f}')
             output.append('=' * 60)
 
             for dag, (recept, score_val, matches) in enumerate(gekozen, 1):
@@ -279,7 +403,6 @@ async def call_tool(name: str, arguments: dict):
             output.append('\n' + '=' * 60)
             output.append('BOODSCHAPPENLIJST PER SUPERMARKT')
             output.append('=' * 60)
-            output.append('(Neem dit mee naar de winkel!)\n')
 
             per_winkel = {}
             totaal = 0
@@ -301,12 +424,537 @@ async def call_tool(name: str, arguments: dict):
 
             output.append(f'\n{"=" * 60}')
             output.append(f'TOTAAL GESCHAT: EUR {totaal:.2f}')
+            
+            if budget:
+                if totaal <= budget:
+                    output.append(f'BINNEN BUDGET! Je houdt EUR {budget - totaal:.2f} over')
+                else:
+                    output.append(f'LET OP: EUR {totaal - budget:.2f} BOVEN BUDGET!')
+            
             output.append('=' * 60)
-            output.append('\nLET OP:')
-            output.append('- "1+1 gratis" = je moet 2 kopen')  
-            output.append('- "2e halve prijs" = koop 2, betaal 1.5x de prijs')
 
             return [TextContent(type='text', text='\n'.join(output))]
+
+        # === NIEUWE TOOLS ===
+
+        # 1. PRIJSHISTORIE & ALERTS
+        elif name == 'prijshistorie':
+            product = arguments.get('product', '')
+            dagen = arguments.get('dagen', 30)
+            
+            # Zoek product
+            cur.execute('''
+                SELECT p.id, p.name, p.price, p.supermarket_code, s.name as sm_name
+                FROM products p
+                JOIN supermarkets s ON p.supermarket_code = s.code
+                WHERE p.name ILIKE %s
+                ORDER BY p.price ASC
+                LIMIT 5
+            ''', (f'%{product}%',))
+            products = cur.fetchall()
+            
+            if not products:
+                return [TextContent(type='text', text=f'Product "{product}" niet gevonden')]
+            
+            lines = [f'PRIJSHISTORIE: "{product}"\n']
+            lines.append('=' * 50)
+            
+            for p in products:
+                # Haal prijshistorie op
+                cur.execute('''
+                    SELECT price, recorded_at 
+                    FROM price_history 
+                    WHERE product_id = %s 
+                    AND recorded_at > NOW() - INTERVAL '%s days'
+                    ORDER BY recorded_at DESC
+                ''', (p['id'], dagen))
+                history = cur.fetchall()
+                
+                huidige_prijs = float(p['price'])
+                laagste_prijs = huidige_prijs
+                hoogste_prijs = huidige_prijs
+                
+                if history:
+                    prijzen = [float(h['price']) for h in history]
+                    laagste_prijs = min(prijzen + [huidige_prijs])
+                    hoogste_prijs = max(prijzen + [huidige_prijs])
+                
+                # Check aanbiedingen
+                cur.execute('''
+                    SELECT discount_price, discount_percent, promo_type
+                    FROM promotions
+                    WHERE product_name ILIKE %s
+                    AND (end_date IS NULL OR end_date >= CURRENT_DATE)
+                    ORDER BY discount_percent DESC NULLS LAST
+                    LIMIT 1
+                ''', (f'%{p["name"][:30]}%',))
+                promo = cur.fetchone()
+                
+                lines.append(f'\n{p["sm_name"]}: {p["name"][:40]}')
+                lines.append(f'  Huidige prijs: EUR {huidige_prijs:.2f}')
+                lines.append(f'  Laagste ooit:  EUR {laagste_prijs:.2f}')
+                lines.append(f'  Hoogste ooit:  EUR {hoogste_prijs:.2f}')
+                
+                if huidige_prijs == laagste_prijs:
+                    lines.append('  >>> LAAGSTE PRIJS OOIT! <<<')
+                elif huidige_prijs <= laagste_prijs * 1.1:
+                    lines.append('  -> Bijna laagste prijs!')
+                
+                if promo:
+                    pct = f" (-{promo['discount_percent']}%)" if promo['discount_percent'] else ''
+                    pt = f" [{promo['promo_type']}]" if promo['promo_type'] else ''
+                    lines.append(f'  IN AANBIEDING: EUR {float(promo["discount_price"]):.2f}{pct}{pt}')
+            
+            return [TextContent(type='text', text='\n'.join(lines))]
+
+        elif name == 'prijs_alert':
+            product = arguments.get('product', '')
+            max_prijs = arguments.get('max_prijs')
+            notify_aanbieding = arguments.get('notify_aanbieding', True)
+            
+            cur.execute('''
+                INSERT INTO product_alerts (product_query, max_prijs, notify_on_sale)
+                VALUES (%s, %s, %s)
+                RETURNING id
+            ''', (product, max_prijs, notify_aanbieding))
+            conn.commit()
+            alert_id = cur.fetchone()['id']
+            
+            lines = ['PRIJSALERT INGESTELD\n']
+            lines.append(f'Product: {product}')
+            if max_prijs:
+                lines.append(f'Melding bij prijs onder: EUR {max_prijs:.2f}')
+            if notify_aanbieding:
+                lines.append('Melding bij aanbiedingen: Ja')
+            lines.append(f'\nAlert ID: {alert_id}')
+            lines.append('\nGebruik "check_alerts" om te zien welke producten nu een goede deal zijn.')
+            
+            return [TextContent(type='text', text='\n'.join(lines))]
+
+        elif name == 'check_alerts':
+            cur.execute('SELECT * FROM product_alerts ORDER BY created_at DESC')
+            alerts = cur.fetchall()
+            
+            if not alerts:
+                return [TextContent(type='text', text='Geen prijsalerts ingesteld. Gebruik "prijs_alert" om er een toe te voegen.')]
+            
+            lines = ['PRIJSALERTS CHECK\n']
+            lines.append('=' * 50)
+            goede_deals = []
+            
+            for alert in alerts:
+                query = alert['product_query']
+                max_prijs = float(alert['max_prijs']) if alert['max_prijs'] else None
+                
+                # Check huidige prijs
+                cur.execute('''
+                    SELECT name, price, supermarket_code FROM products
+                    WHERE name ILIKE %s ORDER BY price LIMIT 1
+                ''', (f'%{query}%',))
+                product = cur.fetchone()
+                
+                # Check aanbiedingen
+                cur.execute('''
+                    SELECT product_name, discount_price, discount_percent, promo_type, supermarket_code
+                    FROM promotions
+                    WHERE product_name ILIKE %s
+                    AND (end_date IS NULL OR end_date >= CURRENT_DATE)
+                    ORDER BY discount_price LIMIT 1
+                ''', (f'%{query}%',))
+                promo = cur.fetchone()
+                
+                is_deal = False
+                if product:
+                    prijs = float(product['price'])
+                    if max_prijs and prijs <= max_prijs:
+                        is_deal = True
+                        goede_deals.append(f'  {product["name"][:35]} - EUR {prijs:.2f} (onder max van EUR {max_prijs:.2f})')
+                
+                if promo and alert['notify_on_sale']:
+                    is_deal = True
+                    pct = f" -{promo['discount_percent']}%" if promo['discount_percent'] else ''
+                    goede_deals.append(f'  {promo["product_name"][:35]} - EUR {float(promo["discount_price"]):.2f}{pct} [{promo["supermarket_code"].upper()}]')
+            
+            if goede_deals:
+                lines.append('\nGOEDE DEALS NU:')
+                lines.extend(goede_deals)
+            else:
+                lines.append('\nGeen van je alerts heeft momenteel een goede deal.')
+            
+            lines.append(f'\n\nTotaal actieve alerts: {len(alerts)}')
+            
+            return [TextContent(type='text', text='\n'.join(lines))]
+
+        # 2. SLIMME BOODSCHAPPENLIJST
+        elif name == 'bewaar_boodschappenlijst':
+            naam = arguments.get('naam', '')
+            producten = arguments.get('producten', [])
+            
+            # Bereken totaal
+            totaal = 0.0
+            items = []
+            for p in producten:
+                cur.execute('SELECT name, price FROM products WHERE name ILIKE %s ORDER BY price LIMIT 1', (f'%{p}%',))
+                r = cur.fetchone()
+                if r:
+                    items.append({'query': p, 'name': r['name'], 'price': float(r['price'])})
+                    totaal += float(r['price'])
+                else:
+                    items.append({'query': p, 'name': p, 'price': None})
+            
+            cur.execute('''
+                INSERT INTO shopping_lists (naam, items, totaal)
+                VALUES (%s, %s, %s)
+                ON CONFLICT DO NOTHING
+                RETURNING id
+            ''', (naam, json.dumps(items), totaal))
+            conn.commit()
+            
+            lines = [f'BOODSCHAPPENLIJST OPGESLAGEN\n']
+            lines.append(f'Naam: {naam}')
+            lines.append(f'Aantal items: {len(items)}')
+            lines.append(f'Geschat totaal: EUR {totaal:.2f}')
+            lines.append('\nGebruik "laad_boodschappenlijst" om deze later te laden.')
+            
+            return [TextContent(type='text', text='\n'.join(lines))]
+
+        elif name == 'laad_boodschappenlijst':
+            naam = arguments.get('naam', '')
+            
+            cur.execute('SELECT * FROM shopping_lists WHERE naam ILIKE %s ORDER BY updated_at DESC LIMIT 1', (f'%{naam}%',))
+            lijst = cur.fetchone()
+            
+            if not lijst:
+                return [TextContent(type='text', text=f'Boodschappenlijst "{naam}" niet gevonden')]
+            
+            items = lijst['items'] if isinstance(lijst['items'], list) else json.loads(lijst['items'])
+            
+            lines = [f'BOODSCHAPPENLIJST: {lijst["naam"]}\n']
+            lines.append('=' * 50)
+            
+            totaal = 0.0
+            besparingen = 0.0
+            
+            for item in items:
+                query = item.get('query', item.get('name', ''))
+                
+                # Zoek huidige prijs
+                cur.execute('SELECT name, price, supermarket_code FROM products WHERE name ILIKE %s ORDER BY price LIMIT 1', (f'%{query}%',))
+                product = cur.fetchone()
+                
+                # Zoek aanbieding
+                cur.execute('''
+                    SELECT product_name, discount_price, discount_percent, promo_type, supermarket_code
+                    FROM promotions WHERE product_name ILIKE %s
+                    AND (end_date IS NULL OR end_date >= CURRENT_DATE)
+                    ORDER BY discount_price LIMIT 1
+                ''', (f'%{query}%',))
+                promo = cur.fetchone()
+                
+                if promo:
+                    prijs = float(promo['discount_price'])
+                    pct = f" (-{promo['discount_percent']}%)" if promo['discount_percent'] else ''
+                    lines.append(f'  {promo["product_name"][:40]}')
+                    lines.append(f'    EUR {prijs:.2f}{pct} AANBIEDING! [{promo["supermarket_code"].upper()}]')
+                    if product:
+                        besparingen += float(product['price']) - prijs
+                    totaal += prijs
+                elif product:
+                    prijs = float(product['price'])
+                    lines.append(f'  {product["name"][:40]}')
+                    lines.append(f'    EUR {prijs:.2f} [{product["supermarket_code"].upper()}]')
+                    totaal += prijs
+                else:
+                    lines.append(f'  {query} - niet gevonden')
+            
+            lines.append('\n' + '=' * 50)
+            lines.append(f'TOTAAL: EUR {totaal:.2f}')
+            if besparingen > 0:
+                lines.append(f'BESPAARD door aanbiedingen: EUR {besparingen:.2f}')
+            
+            return [TextContent(type='text', text='\n'.join(lines))]
+
+        elif name == 'lijst_boodschappenlijsten':
+            cur.execute('SELECT naam, totaal, created_at, json_array_length(items::json) as item_count FROM shopping_lists ORDER BY updated_at DESC')
+            lijsten = cur.fetchall()
+            
+            if not lijsten:
+                return [TextContent(type='text', text='Geen opgeslagen boodschappenlijsten. Gebruik "bewaar_boodschappenlijst" om er een te maken.')]
+            
+            lines = ['OPGESLAGEN BOODSCHAPPENLIJSTEN\n']
+            for l in lijsten:
+                datum = l['created_at'].strftime('%d-%m-%Y') if l['created_at'] else ''
+                lines.append(f'- {l["naam"]} ({l["item_count"]} items, EUR {float(l["totaal"] or 0):.2f}) - {datum}')
+            
+            return [TextContent(type='text', text='\n'.join(lines))]
+
+        elif name == 'wacht_met_kopen':
+            producten = arguments.get('producten', [])
+            
+            lines = ['KOOP-ADVIES: Nu kopen of wachten?\n']
+            lines.append('=' * 50)
+            
+            nu_kopen = []
+            wachten = []
+            
+            for p in producten:
+                # Check huidige aanbiedingen
+                cur.execute('''
+                    SELECT product_name, discount_price, discount_percent, promo_type, end_date
+                    FROM promotions WHERE product_name ILIKE %s
+                    AND (end_date IS NULL OR end_date >= CURRENT_DATE)
+                    ORDER BY discount_percent DESC NULLS LAST LIMIT 1
+                ''', (f'%{p}%',))
+                promo = cur.fetchone()
+                
+                # Check of dit product regelmatig in aanbieding is
+                cur.execute('''
+                    SELECT COUNT(*) as cnt FROM promotions
+                    WHERE product_name ILIKE %s
+                ''', (f'%{p}%',))
+                promo_count = cur.fetchone()['cnt']
+                
+                if promo:
+                    pct = promo['discount_percent'] or 0
+                    end = promo['end_date'].strftime('%d-%m') if promo['end_date'] else 'onbekend'
+                    nu_kopen.append(f'  {p}: NU IN AANBIEDING (-{pct}%) - geldig t/m {end}')
+                elif promo_count > 2:
+                    wachten.append(f'  {p}: komt regelmatig in aanbieding - WACHT')
+                else:
+                    nu_kopen.append(f'  {p}: geen aanbieding verwacht - gewoon kopen')
+            
+            if nu_kopen:
+                lines.append('\nNU KOPEN:')
+                lines.extend(nu_kopen)
+            
+            if wachten:
+                lines.append('\nWACHTEN MET KOPEN:')
+                lines.extend(wachten)
+            
+            return [TextContent(type='text', text='\n'.join(lines))]
+
+        # 3. WINKEL ROUTEPLANNER
+        elif name == 'vind_winkels':
+            postcode = arguments.get('postcode')
+            lat = arguments.get('latitude')
+            lon = arguments.get('longitude')
+            filter_sm = arguments.get('supermarkten')
+            max_afstand = arguments.get('max_afstand', 10)
+            
+            # Als we geen coordinaten hebben, gebruik een standaard (Amsterdam)
+            if not lat or not lon:
+                # In productie zou je hier een geocoding API gebruiken
+                lat, lon = 52.3676, 4.9041  # Amsterdam centrum
+            
+            cur.execute('SELECT * FROM supermarket_locations')
+            locaties = cur.fetchall()
+            
+            if not locaties:
+                # Geen locaties in database, geef algemeen advies
+                lines = ['DICHTSTBIJZIJNDE WINKELS\n']
+                lines.append('Winkellocaties nog niet geladen.')
+                lines.append('\nTip: Gebruik Google Maps om winkels bij jou in de buurt te vinden.')
+                lines.append('\nBeschikbare supermarkten:')
+                
+                cur.execute('SELECT code, name, icon FROM supermarkets ORDER BY name')
+                for s in cur.fetchall():
+                    lines.append(f'  {s["icon"]} {s["name"]}')
+                
+                return [TextContent(type='text', text='\n'.join(lines))]
+            
+            # Bereken afstanden
+            winkels_met_afstand = []
+            for loc in locaties:
+                if filter_sm and loc['supermarket_code'] not in filter_sm:
+                    continue
+                if loc['latitude'] and loc['longitude']:
+                    afstand = haversine(lat, lon, float(loc['latitude']), float(loc['longitude']))
+                    if afstand <= max_afstand:
+                        winkels_met_afstand.append((loc, afstand))
+            
+            winkels_met_afstand.sort(key=lambda x: x[1])
+            
+            lines = [f'WINKELS BINNEN {max_afstand} KM\n']
+            for loc, afstand in winkels_met_afstand[:10]:
+                lines.append(f'  {loc["naam"]} ({afstand:.1f} km)')
+                lines.append(f'    {loc["adres"]}, {loc["postcode"]} {loc["stad"]}')
+            
+            return [TextContent(type='text', text='\n'.join(lines))]
+
+        elif name == 'plan_winkelroute':
+            postcode = arguments.get('postcode', '')
+            producten = arguments.get('producten', [])
+            max_winkels = arguments.get('max_winkels', 3)
+            
+            # Bepaal goedkoopste winkel per product
+            winkel_producten = {}
+            for p in producten:
+                cur.execute('''
+                    SELECT name, price, supermarket_code 
+                    FROM products WHERE name ILIKE %s 
+                    ORDER BY price LIMIT 1
+                ''', (f'%{p}%',))
+                r = cur.fetchone()
+                if r:
+                    sm = r['supermarket_code']
+                    if sm not in winkel_producten:
+                        winkel_producten[sm] = []
+                    winkel_producten[sm].append({'name': r['name'], 'price': float(r['price'])})
+            
+            # Sorteer winkels op aantal producten
+            gesorteerd = sorted(winkel_producten.items(), key=lambda x: len(x[1]), reverse=True)
+            
+            lines = ['OPTIMALE WINKELROUTE\n']
+            lines.append(f'Startpunt: {postcode}')
+            lines.append('=' * 50)
+            
+            totaal = 0
+            for i, (winkel, items) in enumerate(gesorteerd[:max_winkels], 1):
+                subtotaal = sum(item['price'] for item in items)
+                totaal += subtotaal
+                
+                cur.execute('SELECT name, icon FROM supermarkets WHERE code = %s', (winkel,))
+                sm = cur.fetchone()
+                
+                lines.append(f'\nSTOP {i}: {sm["icon"]} {sm["name"]}')
+                lines.append(f'  Producten: {len(items)} | Subtotaal: EUR {subtotaal:.2f}')
+                for item in items:
+                    lines.append(f'    - {item["name"][:35]} EUR {item["price"]:.2f}')
+            
+            lines.append('\n' + '=' * 50)
+            lines.append(f'TOTAAL: EUR {totaal:.2f}')
+            lines.append(f'Aantal winkels: {min(len(gesorteerd), max_winkels)}')
+            
+            return [TextContent(type='text', text='\n'.join(lines))]
+
+        # 4. BUDGET TRACKING
+        elif name == 'set_budget':
+            budget = arguments.get('budget', 0)
+            week = datetime.now().isocalendar()[1]
+            jaar = datetime.now().year
+            
+            cur.execute('''
+                INSERT INTO budget_history (weeknummer, jaar, budget, uitgegeven, bespaard)
+                VALUES (%s, %s, %s, 0, 0)
+                ON CONFLICT DO NOTHING
+            ''', (week, jaar, budget))
+            conn.commit()
+            
+            lines = ['WEEKBUDGET INGESTELD\n']
+            lines.append(f'Week {week} van {jaar}')
+            lines.append(f'Budget: EUR {budget:.2f}')
+            lines.append('\nGebruik "budget_check" om te zien of je boodschappen binnen budget passen.')
+            
+            return [TextContent(type='text', text='\n'.join(lines))]
+
+        elif name == 'budget_check':
+            producten = arguments.get('producten', [])
+            budget = arguments.get('budget', 0)
+            
+            totaal = 0
+            items = []
+            
+            for p in producten:
+                cur.execute('SELECT name, price, supermarket_code FROM products WHERE name ILIKE %s ORDER BY price LIMIT 1', (f'%{p}%',))
+                r = cur.fetchone()
+                if r:
+                    items.append({'query': p, 'name': r['name'], 'price': float(r['price']), 'sm': r['supermarket_code']})
+                    totaal += float(r['price'])
+            
+            lines = ['BUDGET CHECK\n']
+            lines.append('=' * 50)
+            lines.append(f'Budget: EUR {budget:.2f}')
+            lines.append(f'Totaal boodschappen: EUR {totaal:.2f}')
+            
+            if totaal <= budget:
+                over = budget - totaal
+                lines.append(f'\nBINNEN BUDGET! EUR {over:.2f} over')
+            else:
+                tekort = totaal - budget
+                lines.append(f'\nBOVEN BUDGET! EUR {tekort:.2f} te veel')
+                lines.append('\nGOEDKOPERE ALTERNATIEVEN:')
+                
+                # Zoek alternatieven voor duurste items
+                items_sorted = sorted(items, key=lambda x: x['price'], reverse=True)
+                for item in items_sorted[:3]:
+                    cur.execute('''
+                        SELECT name, price, supermarket_code 
+                        FROM products 
+                        WHERE name ILIKE %s AND price < %s
+                        ORDER BY price LIMIT 1
+                    ''', (f'%{item["query"]}%', item['price'] * 0.8))
+                    alt = cur.fetchone()
+                    if alt:
+                        besparing = item['price'] - float(alt['price'])
+                        lines.append(f'  {item["name"][:30]} EUR {item["price"]:.2f}')
+                        lines.append(f'    -> {alt["name"][:30]} EUR {float(alt["price"]):.2f} (bespaar EUR {besparing:.2f})')
+            
+            return [TextContent(type='text', text='\n'.join(lines))]
+
+        elif name == 'bespaar_tips':
+            producten = arguments.get('producten', [])
+            
+            lines = ['PERSOONLIJKE BESPAARTIPS\n']
+            lines.append('=' * 50)
+            
+            totale_besparing = 0
+            tips = []
+            
+            for p in producten:
+                # Check aanbieding
+                cur.execute('''
+                    SELECT product_name, discount_price, discount_percent, promo_type, supermarket_code
+                    FROM promotions WHERE product_name ILIKE %s
+                    AND (end_date IS NULL OR end_date >= CURRENT_DATE)
+                    ORDER BY discount_percent DESC NULLS LAST LIMIT 1
+                ''', (f'%{p}%',))
+                promo = cur.fetchone()
+                
+                # Check goedkoopste variant
+                cur.execute('''
+                    SELECT name, price, supermarket_code FROM products
+                    WHERE name ILIKE %s ORDER BY price LIMIT 1
+                ''', (f'%{p}%',))
+                goedkoopst = cur.fetchone()
+                
+                # Check huismerk alternatief
+                cur.execute('''
+                    SELECT name, price, supermarket_code FROM products
+                    WHERE name ILIKE %s 
+                    AND (name ILIKE '%%huismerk%%' OR name ILIKE '%%basic%%' OR name ILIKE '%%1 de beste%%')
+                    ORDER BY price LIMIT 1
+                ''', (f'%{p}%',))
+                huismerk = cur.fetchone()
+                
+                if promo:
+                    pct = promo['discount_percent'] or 0
+                    tips.append(f'AANBIEDING: {promo["product_name"][:35]}')
+                    tips.append(f'  -{pct}% bij {promo["supermarket_code"].upper()} - EUR {float(promo["discount_price"]):.2f}')
+                    if goedkoopst:
+                        totale_besparing += float(goedkoopst['price']) - float(promo['discount_price'])
+                
+                if huismerk and goedkoopst and float(huismerk['price']) < float(goedkoopst['price']) * 0.8:
+                    besparing = float(goedkoopst['price']) - float(huismerk['price'])
+                    tips.append(f'HUISMERK TIP: {huismerk["name"][:35]}')
+                    tips.append(f'  EUR {float(huismerk["price"]):.2f} (bespaar EUR {besparing:.2f})')
+                    totale_besparing += besparing
+            
+            if tips:
+                lines.extend(tips)
+            else:
+                lines.append('Geen specifieke tips gevonden voor deze producten.')
+            
+            lines.append('\n' + '=' * 50)
+            lines.append(f'POTENTIELE BESPARING: EUR {totale_besparing:.2f}')
+            
+            # Algemene tips
+            lines.append('\nALGEMENE TIPS:')
+            lines.append('- Koop huismerken i.p.v. A-merken')
+            lines.append('- Let op kilo/literprijs')
+            lines.append('- Gebruik "wacht_met_kopen" voor timing')
+            lines.append('- Combineer winkels voor beste deals')
+            
+            return [TextContent(type='text', text='\n'.join(lines))]
 
         return [TextContent(type='text', text=f'Onbekende tool: {name}')]
 

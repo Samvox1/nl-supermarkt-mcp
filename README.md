@@ -1,45 +1,54 @@
 # NL Supermarkt MCP Server
 
-Een Model Context Protocol (MCP) server voor Nederlandse supermarkt data. Vergelijk prijzen, bekijk aanbiedingen, en plan je boodschappen met recepten.
+MCP (Model Context Protocol) server voor Nederlandse supermarkt prijsvergelijking, boodschappenplanning en budget tracking.
 
 ## Features
 
-- **Prijsvergelijking**: Vergelijk prijzen van 100.000+ producten bij 12+ supermarkten
-- **Folder aanbiedingen**: Actuele aanbiedingen van Albert Heijn, Jumbo, Lidl, Vomar, etc.
-- **Recepten database**: 75+ recepten met ingrediënten en bereiding
-- **Boodschappenplanner**: Weekmenu met recepten op basis van aanbiedingen
+### Basis Functionaliteiten
+- **Producten zoeken** - Zoek producten bij 12+ Nederlandse supermarkten
+- **Prijsvergelijking** - Vergelijk prijzen tussen supermarkten
+- **Boodschappenlijst optimalisatie** - Vind goedkoopste combinatie
+- **Folder aanbiedingen** - Bekijk actuele aanbiedingen met promo types (1+1, 2e halve prijs, etc.)
+- **Recepten zoeken** - Zoek recepten met dieetfilters (vegetarisch, vegan, glutenvrij)
+- **Weekmenu planning** - Plan maaltijden met automatische boodschappenlijst
 
-## Quick Start met Docker
+### Nieuwe Features (v2.0)
 
-### 1. Clone de repository
+#### 1. Prijshistorie & Alerts
+- `prijshistorie` - Bekijk prijsverloop, laagste prijs ooit, trends
+- `prijs_alert` - Stel alerts in voor producten onder bepaalde prijs
+- `check_alerts` - Check welke alerts nu een goede deal zijn
+
+#### 2. Slimme Boodschappenlijst
+- `bewaar_boodschappenlijst` - Sla lijsten op voor hergebruik
+- `laad_boodschappenlijst` - Laad lijst met actuele prijzen & aanbiedingen
+- `lijst_boodschappenlijsten` - Overzicht opgeslagen lijsten
+- `wacht_met_kopen` - Advies: nu kopen of wachten op aanbieding?
+
+#### 3. Winkel Routeplanner
+- `vind_winkels` - Vind dichtstbijzijnde supermarkten
+- `plan_winkelroute` - Optimale route langs meerdere winkels
+
+#### 4. Budget Tracking
+- `set_budget` - Stel weekbudget in
+- `budget_check` - Check of boodschappen binnen budget passen
+- `bespaar_tips` - Persoonlijke bespaartips
+
+## Quick Start
 
 ```bash
-git clone https://github.com/yourusername/nl-supermarkt-mcp.git
+# Clone repository
+git clone https://github.com/Samvox1/nl-supermarkt-mcp.git
 cd nl-supermarkt-mcp
-```
 
-### 2. Start de services
-
-```bash
+# Start met Docker Compose
 docker compose up -d
+
+# Eerste data sync (duurt ~2 minuten)
+docker compose run --rm data-sync
 ```
 
-Dit start:
-- PostgreSQL database
-- MCP server op poort 8000
-- Data sync (haalt prijzen, aanbiedingen en recepten op)
-
-### 3. Wacht op data sync (eerste keer ~5 minuten)
-
-```bash
-# Volg de sync progress
-docker compose logs -f data-sync
-
-# Check of alles draait
-docker compose ps
-```
-
-### 4. Configureer Claude Desktop
+## Claude Desktop Configuratie
 
 Voeg toe aan `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
@@ -48,126 +57,83 @@ Voeg toe aan `~/Library/Application Support/Claude/claude_desktop_config.json`:
   "mcpServers": {
     "nl-supermarkt": {
       "command": "npx",
-      "args": ["mcp-remote", "http://localhost:8000/sse", "--allow-http"]
+      "args": ["-y", "mcp-remote", "http://localhost:8000/sse", "--allow-http"]
     }
   }
 }
 ```
 
-### 5. Herstart Claude Desktop
+## Beschikbare Supermarkten
 
-De server is nu beschikbaar!
+| Code | Naam | Producten |
+|------|------|-----------|
+| ah | Albert Heijn | ~15.000 |
+| jumbo | Jumbo | ~17.000 |
+| lidl | Lidl | ~16.000 |
+| aldi | Aldi | ~1.600 |
+| plus | Plus | ~14.000 |
+| dekamarkt | DekaMarkt | ~10.000 |
+| dirk | Dirk | ~7.000 |
+| vomar | Vomar | ~900 |
+| hoogvliet | Hoogvliet | ~7.000 |
+| spar | Spar | ~7.700 |
+| picnic | Picnic | - |
+| poiesz | Poiesz | ~1.800 |
 
-## Beschikbare Tools
+## Voorbeeldgebruik
 
-| Tool | Beschrijving |
-|------|-------------|
-| `zoek_producten` | Zoek producten op naam |
-| `vergelijk_prijzen` | Vergelijk prijzen bij supermarkten |
-| `bekijk_aanbiedingen` | Bekijk folder aanbiedingen |
-| `zoek_recepten` | Zoek recepten |
-| `plan_boodschappen` | Plan weekmenu met boodschappenlijst |
-| `optimaliseer_boodschappenlijst` | Optimaliseer een boodschappenlijst |
-| `lijst_supermarkten` | Toon beschikbare supermarkten |
-
-## Voorbeeld Queries
-
+### Weekplanning met budget
 ```
-# Zoek producten
-"Zoek melk bij Albert Heijn"
-
-# Vergelijk prijzen
-"Vergelijk de prijs van pindakaas"
-
-# Bekijk aanbiedingen
-"Wat zijn de aanbiedingen bij Jumbo voor pasta?"
-
-# Plan boodschappen
-"Plan boodschappen voor 4 dagen, 2 personen, bij AH en Jumbo, voorkeur voor pasta"
+Plan boodschappen voor 4 dagen, 2 personen bij AH en Jumbo.
+Budget max 80 euro, voorkeur voor pasta gerechten.
 ```
 
-## Data Updates
-
-Data wordt automatisch bijgewerkt:
-- Prijzen: dagelijks
-- Aanbiedingen: 2x per dag
-- Recepten: wekelijks
-
-Handmatig updaten:
-
-```bash
-docker compose run --rm data-sync
+### Prijsalert instellen
 ```
+Stel een alert in voor Douwe Egberts koffie onder 6 euro.
+```
+
+### Budget check
+```
+Check of melk, brood, kaas, eieren en boter binnen 15 euro budget past.
+```
+
+## Data Bronnen
+
+- **Prijzen**: [Checkjebon.nl](https://checkjebon.nl) (dagelijks 06:00)
+- **Aanbiedingen**: [Folderz.nl](https://folderz.nl) (2x per dag)
+- **Recepten**: [TheMealDB](https://themealdb.com) + eigen NL recepten
+
+## Automatische Sync (Cronjobs)
+
+| Sync | Schema | Beschrijving |
+|------|--------|--------------|
+| Prijzen | 06:00 dagelijks | Producten van Checkjebon.nl |
+| Folderz | 06:30 & 14:30 | Folder aanbiedingen |
+| Recepten | Zondag 05:00 | Recepten database |
 
 ## Environment Variables
 
 | Variable | Default | Beschrijving |
 |----------|---------|--------------|
-| `DB_HOST` | db | Database host |
-| `DB_PORT` | 5432 | Database poort |
-| `DB_NAME` | supermarkt_db | Database naam |
-| `DB_USER` | postgres | Database gebruiker |
-| `DB_PASSWORD` | supermarkt123 | Database wachtwoord |
-| `PORT` | 8000 | MCP server poort |
+| DB_HOST | db | PostgreSQL host |
+| DB_PORT | 5432 | PostgreSQL port |
+| DB_NAME | supermarkt_db | Database naam |
+| DB_USER | postgres | Database user |
+| DB_PASSWORD | supermarkt123 | Database wachtwoord |
 
 ## Development
 
-### Lokaal draaien (zonder Docker)
-
 ```bash
-# Maak venv
-python -m venv venv
-source venv/bin/activate
-
-# Installeer dependencies
+# Lokaal draaien (zonder Docker)
 pip install -r requirements.txt
-
-# Start PostgreSQL (bijvoorbeeld via brew)
-brew services start postgresql
-
-# Maak database
-createdb supermarkt_db
-psql supermarkt_db < docker/init.sql
-
-# Sync data
-python sync_prices.py
-python sync_folderz.py
-python sync_recepten.py
-
-# Start server
 python src/server_sse.py
+
+# Logs bekijken
+docker logs supermarkt-mcp
+docker logs supermarkt-scheduler
 ```
 
-### Project structuur
-
-```
-nl-supermarkt-mcp/
-├── docker-compose.yml      # Docker compose config
-├── Dockerfile              # MCP server image
-├── Dockerfile.sync         # Data sync image
-├── docker/
-│   ├── init.sql           # Database schema
-│   └── sync_all.py        # Master sync script
-├── src/
-│   ├── server.py          # MCP server logic
-│   └── server_sse.py      # SSE transport wrapper
-├── sync_prices.py         # Prijzen sync (Checkjebon.nl)
-├── sync_folderz.py        # Aanbiedingen sync (Folderz.nl)
-└── sync_recepten.py       # Recepten sync (TheMealDB + eigen)
-```
-
-## Data Bronnen
-
-- **Prijzen**: [Checkjebon.nl](https://checkjebon.nl) - 100.000+ producten
-- **Aanbiedingen**: [Folderz.nl](https://folderz.nl) - Folder aanbiedingen
-- **Recepten**: [TheMealDB](https://themealdb.com) + eigen Nederlandse recepten
-
-## Licentie
+## License
 
 MIT
-
-## Credits
-
-- MCP protocol by Anthropic
-- Data van Checkjebon.nl en Folderz.nl
-- Recepten van TheMealDB

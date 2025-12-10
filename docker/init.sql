@@ -83,3 +83,55 @@ INSERT INTO supermarkets (code, name, icon) VALUES
     ('janlinders', 'Jan Linders', '🟥'),
     ('boni', 'Boni', '🟨')
 ON CONFLICT (code) DO NOTHING;
+
+-- ============================================
+-- NIEUWE TABELLEN VOOR UITGEBREIDE FEATURES
+-- ============================================
+
+-- Opgeslagen boodschappenlijsten
+CREATE TABLE IF NOT EXISTS shopping_lists (
+    id SERIAL PRIMARY KEY,
+    naam VARCHAR(100) NOT NULL,
+    items JSONB NOT NULL,
+    totaal DECIMAL(10,2),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Gebruikersvoorkeuren en alerts
+CREATE TABLE IF NOT EXISTS product_alerts (
+    id SERIAL PRIMARY KEY,
+    product_query VARCHAR(200) NOT NULL,
+    max_prijs DECIMAL(10,2),
+    notify_on_sale BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Supermarkt locaties
+CREATE TABLE IF NOT EXISTS supermarket_locations (
+    id SERIAL PRIMARY KEY,
+    supermarket_code VARCHAR(20) REFERENCES supermarkets(code),
+    naam VARCHAR(200),
+    adres VARCHAR(300),
+    postcode VARCHAR(10),
+    stad VARCHAR(100),
+    latitude DECIMAL(10,7),
+    longitude DECIMAL(10,7),
+    openingstijden JSONB
+);
+
+-- Budget tracking
+CREATE TABLE IF NOT EXISTS budget_history (
+    id SERIAL PRIMARY KEY,
+    weeknummer INTEGER,
+    jaar INTEGER,
+    budget DECIMAL(10,2),
+    uitgegeven DECIMAL(10,2),
+    bespaard DECIMAL(10,2),
+    details JSONB,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Index voor prijshistorie
+CREATE INDEX IF NOT EXISTS idx_price_history_product ON price_history(product_id);
+CREATE INDEX IF NOT EXISTS idx_price_history_date ON price_history(recorded_at);
