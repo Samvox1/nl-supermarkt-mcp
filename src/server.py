@@ -21,6 +21,30 @@ DB_CONFIG = {
     'password': os.environ.get('DB_PASSWORD', '')
 }
 
+# Drogisterij codes
+DROGIST_CODES = ['kruidvat', 'etos', 'trekpleister', 'da', 'hollandbarrett', 'douglas', 'onlinedrogist']
+
+# Category mapping: zoekterm -> lijst van product keywords
+CATEGORY_MAPPING = {
+    # Drogist categorieën
+    'haarverzorging': ['shampoo', 'conditioner', 'haarverf', 'haargel', 'haarspray', 'haar'],
+    'mondverzorging': ['tandpasta', 'tandenborstel', 'tandenstokers', 'mondwater', 'floss'],
+    'lichaamsverzorging': ['deodorant', 'douchegel', 'bodylotion', 'zeep', 'scheermesjes', 'scheerschuim', 'aftershave'],
+    'huidverzorging': ['dagcreme', 'nachtcreme', 'bodylotion', 'zonnebrand', 'aftersun', 'lippenbalsem', 'creme'],
+    'make-up': ['mascara', 'eyeliner', 'oogschaduw', 'lippenstift', 'lipgloss', 'foundation', 'nagellak', 'make-up'],
+    'parfum': ['parfum', 'eau de toilette', 'geur'],
+    'gezondheid': ['vitamines', 'hoestdrank', 'neusspray', 'pleister', 'oogdruppels', 'paracetamol'],
+    'oogzorg': ['lenzen', 'contactlenzen', 'oogdruppels', 'lenzenvloeistof'],
+    'hygiene': ['maandverband', 'tampons', 'wattenschijfjes', 'tissues'],
+    # Supermarkt categorieën
+    'vlees': ['gehakt', 'kip', 'rund', 'varken', 'biefstuk', 'worst', 'ham', 'schnitzel', 'spek', 'bacon'],
+    'vis': ['zalm', 'kabeljauw', 'tonijn', 'garnalen', 'vis', 'haring', 'makreel'],
+    'zuivel': ['melk', 'kaas', 'yoghurt', 'boter', 'kwark', 'vla', 'eieren', 'slagroom'],
+    'groenten': ['tomaat', 'komkommer', 'sla', 'paprika', 'ui', 'wortel', 'broccoli', 'aardappel'],
+    'fruit': ['appel', 'peer', 'banaan', 'sinaasappel', 'aardbei', 'druiven', 'mango'],
+    'dranken': ['cola', 'fanta', 'sap', 'water', 'bier', 'wijn', 'koffie', 'thee'],
+}
+
 db_pool = None
 
 def init_pool():
@@ -55,22 +79,26 @@ server = Server('nl-supermarkt-mcp')
 async def list_tools():
     return [
         # Bestaande tools
-        Tool(name='zoek_producten', description='Zoek producten op naam.',
+        Tool(name='zoek_producten', description='Zoek producten op naam bij supermarkten en drogisten.',
              inputSchema={'type': 'object', 'properties': {
                  'query': {'type': 'string'}, 'supermarkt': {'type': 'string'}, 'limit': {'type': 'integer', 'default': 10}
              }, 'required': ['query']}),
-        Tool(name='vergelijk_prijzen', description='Vergelijk prijzen bij supermarkten.',
+        Tool(name='vergelijk_prijzen', description='Vergelijk prijzen bij supermarkten en drogisterijen.',
              inputSchema={'type': 'object', 'properties': {'product': {'type': 'string'}}, 'required': ['product']}),
-        Tool(name='optimaliseer_boodschappenlijst', description='Optimaliseer boodschappenlijst.',
+        Tool(name='optimaliseer_boodschappenlijst', description='Optimaliseer boodschappenlijst voor supermarkten en drogisten.',
              inputSchema={'type': 'object', 'properties': {
                  'producten': {'type': 'array', 'items': {'type': 'string'}},
                  'supermarkten': {'type': 'array', 'items': {'type': 'string'}}
              }, 'required': ['producten']}),
-        Tool(name='lijst_supermarkten', description='Toon supermarkten.',
+        Tool(name='lijst_supermarkten', description='Toon alle supermarkten en drogisterijen (Kruidvat, Etos, Trekpleister, etc).',
              inputSchema={'type': 'object', 'properties': {}}),
-        Tool(name='bekijk_aanbiedingen', description='Bekijk folder aanbiedingen.',
+        Tool(name='lijst_drogisten', description='Toon drogisterijen (Kruidvat, Etos, Trekpleister, Holland & Barrett, Douglas) met aanbiedingen voor haarverzorging, huidverzorging, make-up, parfum, gezondheid.',
+             inputSchema={'type': 'object', 'properties': {}}),
+        Tool(name='bekijk_aanbiedingen', description='Bekijk folder aanbiedingen van supermarkten EN drogisterijen. Categorieën: haarverzorging (shampoo), mondverzorging (tandpasta), lichaamsverzorging (deodorant), huidverzorging (crème), make-up, parfum, gezondheid (vitamines).',
              inputSchema={'type': 'object', 'properties': {
-                 'supermarkt': {'type': 'string'}, 'categorie': {'type': 'string'}, 'limit': {'type': 'integer', 'default': 15}
+                 'supermarkt': {'type': 'string', 'description': 'Code: ah, jumbo, lidl, kruidvat, etos, trekpleister, hollandbarrett, douglas'},
+                 'categorie': {'type': 'string', 'description': 'Categorie: haarverzorging, mondverzorging, lichaamsverzorging, huidverzorging, make-up, parfum, gezondheid, oogzorg'},
+                 'limit': {'type': 'integer', 'default': 15}
              }}),
         Tool(name='zoek_recepten', description='Zoek recepten met filters voor dieet.',
              inputSchema={'type': 'object', 'properties': {
@@ -240,9 +268,51 @@ async def call_tool(name: str, arguments: dict):
 
         elif name == 'lijst_supermarkten':
             cur.execute('SELECT s.*, COUNT(p.id) as cnt FROM supermarkets s LEFT JOIN products p ON s.code = p.supermarket_code GROUP BY s.id ORDER BY s.name')
-            lines = ['Supermarkten:\n']
+            supermarkten = []
+            drogisten = []
             for r in cur.fetchall():
-                lines.append(f'- {r["icon"]} {r["name"]} ({r["code"]}) - {r["cnt"]:,} producten')
+                line = f'- {r["icon"]} {r["name"]} ({r["code"]}) - {r["cnt"]:,} producten'
+                if r["code"] in DROGIST_CODES:
+                    drogisten.append(line)
+                else:
+                    supermarkten.append(line)
+            lines = ['SUPERMARKTEN:\n']
+            lines.extend(supermarkten)
+            if drogisten:
+                lines.append('\nDROGISTERIJEN:\n')
+                lines.extend(drogisten)
+            return [TextContent(type='text', text='\n'.join(lines))]
+
+        elif name == 'lijst_drogisten':
+            # Haal drogist info uit supermarkets tabel
+            cur.execute('''
+                SELECT s.*, COUNT(pr.id) as promo_count
+                FROM supermarkets s
+                LEFT JOIN promotions pr ON s.code = pr.supermarket_code AND (pr.end_date IS NULL OR pr.end_date >= CURRENT_DATE)
+                WHERE s.code = ANY(%s)
+                GROUP BY s.id ORDER BY s.name
+            ''', (DROGIST_CODES,))
+            results = cur.fetchall()
+
+            lines = ['DROGISTERIJEN MET AANBIEDINGEN:\n']
+            lines.append('=' * 50)
+
+            for r in results:
+                lines.append(f'\n{r["icon"]} {r["name"]} ({r["code"]})')
+                lines.append(f'   Aanbiedingen: {r["promo_count"]}')
+
+            # Toon top categorieën
+            lines.append('\n\nBESCHIKBARE CATEGORIEËN:')
+            lines.append('- haarverzorging (shampoo, conditioner)')
+            lines.append('- mondverzorging (tandpasta, tandenborstel)')
+            lines.append('- lichaamsverzorging (deodorant, douchegel)')
+            lines.append('- huidverzorging (crème, zonnebrand)')
+            lines.append('- make-up (mascara, lippenstift)')
+            lines.append('- parfum')
+            lines.append('- gezondheid (vitamines, pleister)')
+            lines.append('- oogzorg (lenzen, oogdruppels)')
+            lines.append('\nGebruik bekijk_aanbiedingen met categorie om te zoeken.')
+
             return [TextContent(type='text', text='\n'.join(lines))]
 
         elif name == 'bekijk_aanbiedingen':
@@ -254,8 +324,18 @@ async def call_tool(name: str, arguments: dict):
                 where.append("supermarket_code = %s")
                 params.append(supermarkt)
             if categorie:
-                where.append("product_name ILIKE %s")
-                params.append(f'%{categorie}%')
+                # Check of categorie een mapping heeft
+                cat_lower = categorie.lower()
+                if cat_lower in CATEGORY_MAPPING:
+                    # Zoek op alle keywords voor deze categorie
+                    keywords = CATEGORY_MAPPING[cat_lower]
+                    keyword_clauses = " OR ".join(["product_name ILIKE %s" for _ in keywords])
+                    where.append(f"({keyword_clauses})")
+                    params.extend([f'%{kw}%' for kw in keywords])
+                else:
+                    # Zoek letterlijk op de categorie
+                    where.append("product_name ILIKE %s")
+                    params.append(f'%{categorie}%')
             params.append(limit)
             cur.execute(f'SELECT * FROM promotions WHERE {" AND ".join(where)} ORDER BY discount_percent DESC NULLS LAST LIMIT %s', params)
             results = cur.fetchall()
