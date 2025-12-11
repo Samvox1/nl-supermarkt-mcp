@@ -1,14 +1,15 @@
 # NL Supermarkt MCP Server
 
-MCP (Model Context Protocol) server voor Nederlandse supermarkt prijsvergelijking, boodschappenplanning en budget tracking.
+MCP (Model Context Protocol) server voor Nederlandse supermarkt én drogisterij prijsvergelijking, boodschappenplanning en budget tracking.
 
 ## Features
 
 ### Basis Functionaliteiten
-- **Producten zoeken** - Zoek producten bij 12+ Nederlandse supermarkten
-- **Prijsvergelijking** - Vergelijk prijzen tussen supermarkten
+- **Producten zoeken** - Zoek producten bij 12+ Nederlandse supermarkten én drogisterijen
+- **Prijsvergelijking** - Vergelijk prijzen tussen supermarkten en drogisten
 - **Boodschappenlijst optimalisatie** - Vind goedkoopste combinatie
 - **Folder aanbiedingen** - Bekijk actuele aanbiedingen met promo types (1+1, 2e halve prijs, etc.)
+- **Drogisterij aanbiedingen** - Bekijk aanbiedingen van Kruidvat, Etos, Trekpleister, etc.
 - **Recepten zoeken** - Zoek recepten met dieetfilters (vegetarisch, vegan, glutenvrij)
 - **Weekmenu planning** - Plan maaltijden met automatische boodschappenlijst
 
@@ -34,6 +35,10 @@ MCP (Model Context Protocol) server voor Nederlandse supermarkt prijsvergelijkin
 - `budget_check` - Check of boodschappen binnen budget passen
 - `bespaar_tips` - Persoonlijke bespaartips
 
+#### 5. Drogisterij Support
+- `lijst_drogisten` - Toon alle drogisterijen met aanbiedingen
+- `bekijk_aanbiedingen` - Bekijk aanbiedingen per categorie (haarverzorging, make-up, parfum, etc.)
+
 ## Quick Start
 
 ```bash
@@ -44,8 +49,8 @@ cd nl-supermarkt-mcp
 # Start met Docker Compose
 docker compose up -d
 
-# Eerste data sync (duurt ~2 minuten)
-docker compose run --rm data-sync
+# Eerste data sync (duurt ~5 minuten)
+docker compose run --rm scheduler python3 sync_folderz.py
 ```
 
 ## Claude Desktop Configuratie
@@ -54,10 +59,10 @@ Voeg toe aan `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```json
 {
-  "mcpServers": {
-    "nl-supermarkt": {
-      "command": "npx",
-      "args": ["-y", "mcp-remote", "http://localhost:8000/sse", "--allow-http"]
+  mcpServers: {
+    nl-supermarkt: {
+      command: npx,
+      args: [-y, mcp-remote, http://localhost:8000/sse, --allow-http]
     }
   }
 }
@@ -80,12 +85,41 @@ Voeg toe aan `~/Library/Application Support/Claude/claude_desktop_config.json`:
 | picnic | Picnic | - |
 | poiesz | Poiesz | ~1.800 |
 
+## Beschikbare Drogisterijen
+
+| Code | Naam | Aanbiedingen |
+|------|------|--------------|
+| kruidvat | Kruidvat | ✅ |
+| etos | Etos | ✅ |
+| trekpleister | Trekpleister | ✅ |
+| da | DA | ✅ |
+| hollandbarrett | Holland & Barrett | ✅ |
+| douglas | Douglas | ✅ |
+| onlinedrogist | De Online Drogist | ✅ |
+
+### Drogisterij Categorieën
+
+- **haarverzorging** - shampoo, conditioner, haarverf
+- **mondverzorging** - tandpasta, tandenborstel, mondwater
+- **lichaamsverzorging** - deodorant, douchegel, scheermesjes
+- **huidverzorging** - dagcrème, bodylotion, zonnebrand
+- **make-up** - mascara, lippenstift, foundation
+- **parfum** - parfum, eau de toilette
+- **gezondheid** - vitamines, paracetamol, pleisters
+- **oogzorg** - lenzen, lenzenvloeistof
+- **hygiene** - maandverband, tampons
+
 ## Voorbeeldgebruik
 
 ### Weekplanning met budget
 ```
 Plan boodschappen voor 4 dagen, 2 personen bij AH en Jumbo.
 Budget max 80 euro, voorkeur voor pasta gerechten.
+```
+
+### Drogisterij aanbiedingen
+```
+Toon aanbiedingen voor shampoo bij Kruidvat en Etos.
 ```
 
 ### Prijsalert instellen
@@ -100,17 +134,18 @@ Check of melk, brood, kaas, eieren en boter binnen 15 euro budget past.
 
 ## Data Bronnen
 
-- **Prijzen**: [Checkjebon.nl](https://checkjebon.nl) (dagelijks 06:00)
-- **Aanbiedingen**: [Folderz.nl](https://folderz.nl) (2x per dag)
+- **Prijzen**: [Checkjebon.nl](https://checkjebon.nl) (dagelijks 07:00)
+- **Aanbiedingen**: [Folderz.nl](https://folderz.nl) (2x per dag - supermarkten én drogisten)
 - **Recepten**: [TheMealDB](https://themealdb.com) + eigen NL recepten
 
 ## Automatische Sync (Cronjobs)
 
 | Sync | Schema | Beschrijving |
 |------|--------|--------------|
-| Prijzen | 06:00 dagelijks | Producten van Checkjebon.nl |
-| Folderz | 06:30 & 14:30 | Folder aanbiedingen |
-| Recepten | Zondag 05:00 | Recepten database |
+| sync_recepten.py | 05:00 | Recepten database |
+| sync_folderz.py | 06:30 & 14:30 | Folder aanbiedingen (supermarkten + drogisten) |
+| sync_prices.py | 07:00 & 15:00 | Productprijzen |
+| detect_price_drops.py | 08:00 | Prijsdalingen detecteren |
 
 ## Environment Variables
 
