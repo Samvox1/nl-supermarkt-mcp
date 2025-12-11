@@ -1,11 +1,5 @@
-# Prijzen sync - dagelijks 06:00
-0 6 * * * cd /app && python sync_all.py prices >> /var/log/cron.log 2>&1
-
 # Folderz aanbiedingen sync - 2x per dag 06:30 en 14:30
-30 6 * * * cd /app && python sync_all.py folderz >> /var/log/cron.log 2>&1
-30 14 * * * cd /app && python sync_all.py folderz >> /var/log/cron.log 2>&1
-
-# Recepten sync - wekelijks zondag 05:00
-0 5 * * 0 cd /app && python sync_all.py recepten >> /var/log/cron.log 2>&1
+30 6 * * * cd /app && python3 sync_folderz.py >> /var/log/cron.log 2>&1
+30 14 * * * cd /app && python3 sync_folderz.py >> /var/log/cron.log 2>&1
 
 # Lege regel aan het eind vereist voor cron

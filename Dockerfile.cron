@@ -6,11 +6,8 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y cron libpq5 && rm -rf /var/lib/apt/lists/*
 RUN pip install --no-cache-dir psycopg2-binary httpx requests
 
-# Copy sync scripts
-COPY docker/sync_all.py .
-COPY sync_prices.py .
+# Copy sync script
 COPY sync_folderz.py .
-COPY sync_recepten.py .
 COPY docker/crontab /etc/cron.d/supermarkt-cron
 
 # Setup cron
@@ -26,4 +23,4 @@ ENV DB_USER=postgres
 ENV DB_PASSWORD=supermarkt123
 
 # Run initial sync, then start cron
-CMD python sync_all.py && cron && tail -f /var/log/cron.log
+CMD python3 sync_folderz.py && cron && tail -f /var/log/cron.log
