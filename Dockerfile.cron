@@ -6,13 +6,12 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y cron libpq5 && rm -rf /var/lib/apt/lists/*
 
 # Install Python packages
-RUN pip install --no-cache-dir psycopg2-binary httpx requests supermarktconnector
+RUN pip install --no-cache-dir psycopg2-binary httpx requests
 
-# Copy all sync scripts
+# Copy sync scripts
 COPY sync_folderz.py .
 COPY sync_recepten.py .
 COPY sync_prices.py .
-COPY sync_promotions.py .
 COPY detect_price_drops.py .
 
 # Setup cron

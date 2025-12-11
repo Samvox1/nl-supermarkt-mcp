@@ -1,17 +1,14 @@
-# Folderz aanbiedingen sync - 2x per dag 06:30 en 14:30
-30 6 * * * cd /app && python3 sync_folderz.py >> /var/log/cron.log 2>&1
-30 14 * * * cd /app && python3 sync_folderz.py >> /var/log/cron.log 2>&1
-
 # Recepten sync - 1x per dag om 05:00 (verandert niet vaak)
 0 5 * * * cd /app && python3 sync_recepten.py >> /var/log/cron.log 2>&1
+
+# Folderz aanbiedingen sync - 2x per dag 06:30 en 14:30
+# Inclusief supermarkten EN drogisterijen (alles-in-één)
+30 6 * * * cd /app && python3 sync_folderz.py >> /var/log/cron.log 2>&1
+30 14 * * * cd /app && python3 sync_folderz.py >> /var/log/cron.log 2>&1
 
 # Prijzen sync - 2x per dag om 07:00 en 15:00 (na folderz sync)
 0 7 * * * cd /app && python3 sync_prices.py >> /var/log/cron.log 2>&1
 0 15 * * * cd /app && python3 sync_prices.py >> /var/log/cron.log 2>&1
-
-# Promoties sync (AH/Jumbo API) - 2x per dag om 07:30 en 15:30
-30 7 * * * cd /app && python3 sync_promotions.py >> /var/log/cron.log 2>&1
-30 15 * * * cd /app && python3 sync_promotions.py >> /var/log/cron.log 2>&1
 
 # Prijsdalingen detecteren - 1x per dag om 08:00 (na alle syncs)
 0 8 * * * cd /app && python3 detect_price_drops.py >> /var/log/cron.log 2>&1
