@@ -18,28 +18,29 @@ def main():
     import uvicorn
     from mcp.server.sse import SseServerTransport
     from starlette.applications import Starlette
-    from starlette.routing import Route
-    from starlette.responses import JSONResponse
+    from starlette.routing import Mount, Route
+    from starlette.responses import JSONResponse, Response
     from starlette.requests import Request
 
-    sse = SseServerTransport("/messages")
+    sse = SseServerTransport("/messages/")
 
     async def handle_sse(request: Request):
         logger.info("SSE connection received")
         async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
             await server.run(streams[0], streams[1], server.create_initialization_options())
-
-    async def handle_messages(request: Request):
-        await sse.handle_post_message(request.scope, request.receive, request._send)
-        return JSONResponse({"status": "ok"})
+        # The SSE transport already sent the response; return an empty one so
+        # Starlette doesn't try to call None when the client disconnects.
+        return Response()
 
     async def health(request: Request):
         return JSONResponse({"status": "healthy"})
 
     app = Starlette(
         routes=[
-            Route("/sse", endpoint=handle_sse),
-            Route("/messages", endpoint=handle_messages, methods=["POST"]),
+            Route("/sse", endpoint=handle_sse, methods=["GET"]),
+            # handle_post_message is a raw ASGI app that sends its own 202
+            # response, so mount it directly instead of wrapping it in a Route.
+            Mount("/messages/", app=sse.handle_post_message),
             Route("/health", endpoint=health),
         ]
     )
